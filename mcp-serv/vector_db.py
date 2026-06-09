@@ -53,6 +53,10 @@ class VectorDatabase:
         payloads: list[dict],
     ) -> None:
         client = await self._get_client()
+        if len(vectors) != len(payloads):
+            raise ValueError(
+                f"vectors and payloads must have the same length (got {len(vectors)} and {len(payloads)})"
+            )
         points = [
             PointStruct(
                 id=str(uuid.uuid4()),
@@ -95,8 +99,8 @@ class VectorDatabase:
             SearchResult(
                 id=str(hit.id),
                 score=hit.score,
-                text=hit.payload.get("text", ""),
-                metadata={k: v for k, v in hit.payload.items() if k != "text"},
+                text=(payload := (hit.payload or {})).get("text", ""),
+                metadata={k: v for k, v in payload.items() if k != "text"},
             )
             for hit in hits
         ]

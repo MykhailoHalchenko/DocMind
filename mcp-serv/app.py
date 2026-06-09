@@ -1,5 +1,6 @@
 import json
 from contextlib import asynccontextmanager
+from unittest import result
 
 import httpx
 import tiktoken
@@ -107,7 +108,7 @@ async def classify_intent(question: str) -> str:
 async def agent_answer(question: str, filters: dict | None) -> tuple[str, list[dict]]:
     server_params = StdioServerParameters(
         command="python",
-        args=["app.py", "--mcp"],
+        args=[__file__, "--mcp"],
     )
     sources: list[dict] = []
 
@@ -140,14 +141,13 @@ async def agent_answer(question: str, filters: dict | None) -> tuple[str, list[d
                 {"role": "user", "content": question},
             ]
 
+            max_iterations = 8
+            iteration = 0
             while True:
-                result = await call_llm(
-                    messages=messages,
-                    model=settings.heavy_llm_model,
-                    api_key=settings.heavy_llm_api_key,
-                    base_url=settings.heavy_llm_base_url,
-                    tools=tools_schema,
-                )
+                iteration += 1
+                if iteration > max_iterations:
+                    raise RuntimeError("Exceeded maximum LLM/tool-call iterations")
+
 
                 choice = result["choices"][0]
                 msg = choice["message"]
