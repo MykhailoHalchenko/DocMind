@@ -1,24 +1,23 @@
 import json
+import sys
+import asyncio
 from contextlib import asynccontextmanager
-from unittest import result
 
-import httpx
 import tiktoken
 from fastapi import FastAPI, HTTPException
 from fastmcp import FastMCP
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from chunking import chunk_documents
+from classifier import classify_user_intent, classify_chunks_batch
 from config import settings
 from embeddings import get_embeddings, get_single_embedding
+from llm import rag_answer, map_reduce_summarize
 from vector_db import db
 
-
-# ---------------------------------------------------------------------------
-# MCP Server
-# ---------------------------------------------------------------------------
 
 mcp = FastMCP("KnowledgeBaseServer")
 
@@ -31,20 +30,8 @@ async def search_knowledge_base(
 ) -> list[dict]:
     await db.ensure_collection_exists()
     query_vector = await get_single_embedding(query)
-    results = await db.semantic_search(
-        query_vector=query_vector,
-        filters=filters,
-        top_k=top_k,
-    )
-    return [
-        {
-            "id": r.id,
-            "score": round(r.score, 4),
-            "text": r.text,
-            "metadata": r.metadata,
-        }
-        for r in results
-    ]
+    results = await db.semantic_search(query_vector=query_vector, filters=filters, top_k=top_k)
+    return [{"id": r.id, "score": round(r.score, 4), "text": r.text, "metadata": r.metadata} for r in results]
 
 
 @mcp.tool()
@@ -52,64 +39,29 @@ async def get_document_metadata(document_id: str) -> dict | None:
     return await db.get_by_id(document_id)
 
 
+@mcp.tool()
+async def summarize_document(document_id: str) -> str:
+    payload = await db.get_by_id(document_id)
+    if not payload:
+        return "Document not found."
+    return await map_reduce_summarize([payload.get("text", "")])
 
-tokenizer = tiktoken.get_encoding("cl100k_base")
+
+_tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
 def count_tokens(text: str) -> int:
-    return len(tokenizer.encode(text))
+    return len(_tokenizer.encode(text))
 
 
-async def call_llm(
-    messages: list[dict],
-    model: str,
-    api_key: str,
-    base_url: str = "https://api.openai.com/v1",
-    tools: list[dict] | None = None,
-) -> dict:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload: dict = {"model": model, "messages": messages}
-    if tools:
-        payload["tools"] = tools
-        payload["tool_choice"] = "auto"
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            f"{base_url}/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        return response.json()
+_strong_client = AsyncOpenAI(
+    api_key=settings.strong_llm_api_key,
+    base_url=settings.strong_llm_base_url,
+)
 
 
-async def classify_intent(question: str) -> str:
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an intent classifier. "
-                "Respond with a single word: SEARCH, GENERAL, GREETING, or OTHER."
-            ),
-        },
-        {"role": "user", "content": question},
-    ]
-    result = await call_llm(
-        messages=messages,
-        model=settings.fast_llm_model,
-        api_key=settings.openai_api_key,
-    )
-    return result["choices"][0]["message"]["content"].strip().upper()
-
-
-async def agent_answer(question: str, filters: dict | None) -> tuple[str, list[dict]]:
-    server_params = StdioServerParameters(
-        command="python",
-        args=[__file__, "--mcp"],
-    )
+async def agent_loop(question: str, filters: dict | None) -> tuple[str, list[dict]]:
+    server_params = StdioServerParameters(command="python", args=[__file__, "--mcp"])
     sources: list[dict] = []
 
     async with stdio_client(server_params) as (read, write):
@@ -133,40 +85,38 @@ async def agent_answer(question: str, filters: dict | None) -> tuple[str, list[d
                 {
                     "role": "system",
                     "content": (
-                        "You are a knowledgeable assistant with access to a knowledge base. "
-                        "Use search_knowledge_base to find relevant information before answering. "
-                        "Always cite your sources."
+                        "You are a precise scientific assistant with access to a knowledge base. "
+                        "Always call search_knowledge_base before answering. "
+                        "Use ONLY retrieved context. Cite sources as [chunk_id]. "
+                        "If facts are missing, say: 'Insufficient data in the provided sources.'"
                     ),
                 },
                 {"role": "user", "content": question},
             ]
 
-            max_iterations = 8
-            iteration = 0
-            while True:
-                iteration += 1
-                if iteration > max_iterations:
-                    raise RuntimeError("Exceeded maximum LLM/tool-call iterations")
+            for _ in range(8):
+                response = await _strong_client.chat.completions.create(
+                    model=settings.strong_llm_model,
+                    messages=messages,
+                    tools=tools_schema,
+                    tool_choice="auto",
+                )
+                choice = response.choices[0]
+                msg = choice.message
+                messages.append(msg.model_dump(exclude_none=True))
 
+                if choice.finish_reason != "tool_calls":
+                    return msg.content or "", sources
 
-                choice = result["choices"][0]
-                msg = choice["message"]
-                messages.append(msg)
-
-                if choice["finish_reason"] != "tool_calls":
-                    return msg["content"], sources
-
-                for tool_call in msg.get("tool_calls", []):
-                    fn_name = tool_call["function"]["name"]
-                    fn_args = json.loads(tool_call["function"]["arguments"])
+                for tool_call in msg.tool_calls or []:
+                    fn_name = tool_call.function.name
+                    fn_args = json.loads(tool_call.function.arguments)
 
                     if filters and fn_name == "search_knowledge_base":
                         fn_args.setdefault("filters", filters)
 
                     tool_result = await session.call_tool(fn_name, fn_args)
-                    tool_content = (
-                        tool_result.content[0].text if tool_result.content else "[]"
-                    )
+                    tool_content = tool_result.content[0].text if tool_result.content else "[]"
 
                     if fn_name == "search_knowledge_base":
                         try:
@@ -174,13 +124,13 @@ async def agent_answer(question: str, filters: dict | None) -> tuple[str, list[d
                         except json.JSONDecodeError:
                             sources = []
 
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call["id"],
-                            "content": tool_content,
-                        }
-                    )
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": tool_content,
+                    })
+
+    return "No answer generated.", sources
 
 
 class QueryRequest(BaseModel):
@@ -190,7 +140,7 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
-    intent: str
+    intent: dict
     sources: list[dict]
     token_usage: dict
 
@@ -199,6 +149,13 @@ class IndexRequest(BaseModel):
     documents: list[dict]
     text_field: str = "text"
     auto_chunk: bool = True
+    classify_chunks: bool = False
+    clean_text: bool = False
+    use_ner: bool = False
+
+
+class SummarizeRequest(BaseModel):
+    chunks: list[str]
 
 
 @asynccontextmanager
@@ -213,20 +170,22 @@ api = FastAPI(title="Knowledge Base API", lifespan=lifespan)
 
 @api.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
-    intent = await classify_intent(request.question)
-    answer, sources = await agent_answer(request.question, request.filters)
+    intent = await classify_user_intent(request.question)
 
-    input_tokens = count_tokens(request.question)
-    output_tokens = count_tokens(answer)
+    filters = request.filters
+    if intent.get("filters"):
+        filters = {**(filters or {}), **intent["filters"]}
+
+    answer, sources = await agent_loop(request.question, filters)
 
     return QueryResponse(
         answer=answer,
         intent=intent,
         sources=sources,
         token_usage={
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": input_tokens + output_tokens,
+            "input_tokens": count_tokens(request.question),
+            "output_tokens": count_tokens(answer),
+            "total_tokens": count_tokens(request.question) + count_tokens(answer),
         },
     )
 
@@ -238,16 +197,34 @@ async def index(request: IndexRequest):
 
     docs = request.documents
     if request.auto_chunk:
-        docs = chunk_documents(docs, text_field=request.text_field)
+        docs = chunk_documents(
+            docs,
+            text_field=request.text_field,
+            use_ner=request.use_ner,
+            clean_text=request.clean_text,
+        )
 
     texts = [d.get("text", "") for d in docs]
     if any(not t for t in texts):
         raise HTTPException(status_code=400, detail="Each document must have a 'text' field")
 
+    if request.classify_chunks:
+        classifications = await classify_chunks_batch(texts)
+        for doc, cls in zip(docs, classifications):
+            doc.update(cls)
+
     vectors = await get_embeddings(texts)
     await db.batch_insert(vectors, docs)
 
-    return {"indexed": len(docs), "chunks": len(docs) if request.auto_chunk else None}
+    return {"indexed": len(docs)}
+
+
+@api.post("/summarize")
+async def summarize(request: SummarizeRequest):
+    if not request.chunks:
+        raise HTTPException(status_code=400, detail="No chunks provided")
+    summary = await map_reduce_summarize(request.chunks)
+    return {"summary": summary}
 
 
 @api.get("/health")
@@ -256,7 +233,6 @@ async def health():
 
 
 if __name__ == "__main__":
-    import sys
     if "--mcp" in sys.argv:
         mcp.run(transport="stdio")
     else:
