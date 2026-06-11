@@ -198,6 +198,57 @@ cython_debug/
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
+
+# ==================== DOCMIND SPECIFIC ====================
+
+# Datasets - Do NOT commit these files
+# Large files and proprietary data should not be in version control
+*.pdf
+*.json
+*.csv
+*.xlsx
+*.xls
+*.feather
+*.parquet
+*.h5
+*.hdf5
+
+# Dataset directories
+datasets/
+data/
+raw_data/
+training_data/
+test_data/
+validation_data/
+external_data/
+
+# Temporary upload files
+uploads/
+upload/
+tempfile*
+mcp_serv_uploads/
+**/tempdir/
+.tmp/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+chroma/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+mcp.env
+
 .cursorignore
 .cursorindexingignore
 

@@ -26,38 +26,69 @@ Example output:
 {"intent": "FIND_FACT", "filters": {"category": "Results"}, "complexity": "simple"}"""
 
 
+def _classify_intent_heuristic(question: str) -> dict:
+    """Fallback heuristic-based intent classification"""
+    q_lower = question.lower()
+    
+    # Detect intent from keywords
+    intent = "GENERAL"
+    filters = None
+    complexity = "simple" if len(question.split()) < 10 else "complex"
+    
+    if any(word in q_lower for word in ["summarize", "summary", "overview", "explain"]):
+        intent = "SUMMARIZE"
+    elif any(word in q_lower for word in ["method", "how did", "procedure", "process"]):
+        intent = "METHODOLOGY"
+    elif any(word in q_lower for word in ["result", "find", "what", "where", "who"]):
+        intent = "FIND_FACT"
+    elif any(word in q_lower for word in ["compare", "difference", "similar", "versus", "vs"]):
+        intent = "COMPARE"
+    elif any(word in q_lower for word in ["hi", "hello", "hey", "thanks"]):
+        intent = "GREETING"
+    
+    return {"intent": intent, "filters": filters, "complexity": complexity}
+
+
 async def classify_chunk(text: str) -> dict:
-    response = await _fast_client.chat.completions.create(
-        model=settings.fast_llm_model,
-        messages=[
-            {"role": "system", "content": CHUNK_CATEGORIZATION_PROMPT},
-            {"role": "user", "content": text[:1500]},
-        ],
-        temperature=0,
-        max_tokens=150,
-    )
-    raw = response.choices[0].message.content.strip()
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+        response = await _fast_client.chat.completions.create(
+            model=settings.fast_llm_model,
+            messages=[
+                {"role": "system", "content": CHUNK_CATEGORIZATION_PROMPT},
+                {"role": "user", "content": text[:1500]},
+            ],
+            temperature=0,
+            max_tokens=150,
+        )
+        raw = response.choices[0].message.content.strip()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {"category": "Other", "keywords": [], "sentiment": "neutral"}
+    except Exception as e:
+        # Fallback on API error
         return {"category": "Other", "keywords": [], "sentiment": "neutral"}
 
 
 async def classify_user_intent(question: str) -> dict:
-    response = await _fast_client.chat.completions.create(
-        model=settings.fast_llm_model,
-        messages=[
-            {"role": "system", "content": USER_INTENT_PROMPT},
-            {"role": "user", "content": question},
-        ],
-        temperature=0,
-        max_tokens=100,
-    )
-    raw = response.choices[0].message.content.strip()
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {"intent": "GENERAL", "filters": None, "complexity": "simple"}
+        response = await _fast_client.chat.completions.create(
+            model=settings.fast_llm_model,
+            messages=[
+                {"role": "system", "content": USER_INTENT_PROMPT},
+                {"role": "user", "content": question},
+            ],
+            temperature=0,
+            max_tokens=100,
+        )
+        raw = response.choices[0].message.content.strip()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return _classify_intent_heuristic(question)
+    except Exception as e:
+        # Fallback to heuristic classification on API error
+        return _classify_intent_heuristic(question)
 
 
 async def classify_chunks_batch(texts: list[str]) -> list[dict]:

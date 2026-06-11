@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DocMind - Knowledge Base Query</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📚 DocMind</h1>
+            <p class="subtitle">Knowledge Base Query System</p>
+        </header>
+
+        <main>
+            <!-- Upload Section -->
+            <div class="upload-section">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="query">Query</button>
+                    <button class="tab-btn" data-tab="upload">Upload & Train</button>
+                </div>
+
+                <!-- Query Tab -->
+                <div id="query-tab" class="tab-content active">
+                    <div class="query-section">
+                        <div class="form-group">
+                            <label for="question">Ask a Question:</label>
+                            <input 
+                                type="text" 
+                                id="question" 
+                                placeholder="What would you like to know?" 
+                                class="input-field"
+                            >
+                            <button id="queryBtn" class="btn btn-primary">Search</button>
+                        </div>
+
+                        <div id="loading" class="loading hidden">
+                            <div class="spinner"></div>
+                            <p>Searching knowledge base...</p>
+                        </div>
+                    </div>
+
+                    <div id="results" class="results hidden">
+                        <div class="result-card">
+                            <h2>Answer</h2>
+                            <div id="answer" class="answer-text"></div>
+
+                            <h3>Sources</h3>
+                            <div id="sources" class="sources-list"></div>
+
+                            <h3>Intent Detection</h3>
+                            <div id="intent" class="intent-info"></div>
+
+                            <h3>Token Usage</h3>
+                            <div id="tokens" class="tokens-info"></div>
+                        </div>
+                    </div>
+
+                    <div id="error" class="error hidden"></div>
+                </div>
+
+                <!-- Upload Tab -->
+                <div id="upload-tab" class="tab-content">
+                    <div class="upload-container">
+                        <div class="upload-box" id="uploadBox">
+                            <div class="upload-icon">📄</div>
+                            <h3>Drag & Drop Files Here</h3>
+                            <p>or click to select</p>
+                            <p class="supported">Supported: PDF, JSON, CSV</p>
+                            <input type="file" id="fileInput" multiple accept=".pdf,.json,.csv" hidden>
+                        </div>
+
+                        <div id="uploadProgress" class="upload-progress hidden">
+                            <div class="progress-item">
+                                <span id="progressFileName"></span>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="progressFill"></div>
+                                </div>
+                                <span id="progressPercent">0%</span>
+                            </div>
+                        </div>
+
+                        <div id="uploadStatus" class="upload-status hidden">
+                            <div id="statusMessage"></div>
+                        </div>
+
+                        <div class="dataset-info">
+                            <h3>Dataset Support</h3>
+                            <ul>
+                                <li><strong>PDF:</strong> Automatically indexed and chunked</li>
+                                <li><strong>JSON:</strong> For multi-modal training data</li>
+                                <li><strong>CSV:</strong> For structured datasets</li>
+                            </ul>
+                        </div>
+
+                        <div id="uploadedFiles" class="uploaded-files"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>Powered by FastMCP & SiliconFlow LLM</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
