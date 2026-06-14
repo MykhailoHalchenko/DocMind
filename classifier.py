@@ -1,6 +1,9 @@
 import json
+import logging
 from openai import AsyncOpenAI
 from config import settings
+
+_logger = logging.getLogger(__name__)
 
 _fast_client = AsyncOpenAI(
     api_key=settings.fast_llm_api_key,
@@ -63,10 +66,11 @@ async def classify_chunk(text: str) -> dict:
         raw = response.choices[0].message.content.strip()
         try:
             return json.loads(raw)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            _logger.warning(f"Failed to parse chunk classification JSON: {e}")
             return {"category": "Other", "keywords": [], "sentiment": "neutral"}
     except Exception as e:
-        # Fallback on API error
+        _logger.warning(f"Chunk classification API error: {e}")
         return {"category": "Other", "keywords": [], "sentiment": "neutral"}
 
 
@@ -84,10 +88,11 @@ async def classify_user_intent(question: str) -> dict:
         raw = response.choices[0].message.content.strip()
         try:
             return json.loads(raw)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            _logger.warning(f"Failed to parse intent classification JSON: {e}")
             return _classify_intent_heuristic(question)
     except Exception as e:
-        # Fallback to heuristic classification on API error
+        _logger.warning(f"Intent classification API error, using heuristic: {e}")
         return _classify_intent_heuristic(question)
 
 

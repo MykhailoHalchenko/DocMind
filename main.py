@@ -3,7 +3,6 @@ import argparse
 import sys
 import webbrowser
 from pathlib import Path
-import subprocess
 import time
 
 # Add mcp-serv to path for imports
