@@ -121,6 +121,49 @@ class VectorDatabase:
             return None
         return results[0].payload
 
+    async def delete_by_id(self, point_id: str) -> bool:
+        """Delete a document by ID. Returns True if deleted."""
+        client = await self._get_client()
+        try:
+            await client.delete(
+                collection_name=settings.qdrant_collection,
+                points_selector=point_id,
+            )
+            return True
+        except Exception:
+            return False
+
+    async def delete_by_filter(self, filters: dict) -> int:
+        """Delete documents matching filter. Returns approximate count."""
+        client = await self._get_client()
+        conditions = [
+            FieldCondition(key=k, match=MatchValue(value=v))
+            for k, v in filters.items()
+        ]
+        qdrant_filter = Filter(must=conditions)
+        try:
+            await client.delete(
+                collection_name=settings.qdrant_collection,
+                points_selector=qdrant_filter,
+            )
+            return -1  # Qdrant doesn't return count
+        except Exception:
+            return 0
+
+    async def get_collection_info(self) -> dict:
+        """Get information about the collection."""
+        client = await self._get_client()
+        try:
+            info = await client.get_collection(settings.qdrant_collection)
+            return {
+                "name": settings.qdrant_collection,
+                "points_count": info.points_count or 0,
+                "vectors_count": info.vectors_count or 0,
+                "status": info.status.value if info.status else "unknown",
+            }
+        except Exception:
+            return {"name": settings.qdrant_collection, "points_count": 0, "error": "Collection not found"}
+
     async def close(self) -> None:
         if self._client:
             await self._client.close()

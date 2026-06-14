@@ -1,4 +1,5 @@
 import json
+import logging
 import sys
 import asyncio
 from contextlib import asynccontextmanager
@@ -25,6 +26,8 @@ from embeddings import get_embeddings, get_single_embedding
 from llm import rag_answer, map_reduce_summarize
 from vector_db import db
 
+_logger = logging.getLogger(__name__)
+
 
 mcp = FastMCP("KnowledgeBaseServer")
 
@@ -35,28 +38,214 @@ async def search_knowledge_base(
     filters: dict | None = None,
     top_k: int = 5,
 ) -> list[dict]:
-    await db.ensure_collection_exists()
-    query_vector = await get_single_embedding(query)
-    results = await db.semantic_search(query_vector=query_vector, filters=filters, top_k=top_k)
-    return [{"id": r.id, "score": round(r.score, 4), "text": r.text, "metadata": r.metadata} for r in results]
+    """
+    Search the knowledge base using semantic similarity.
+
+    Args:
+        query: The search query text to find relevant documents.
+        filters: Optional metadata filters (e.g., {"category": "Results"}).
+        top_k: Maximum number of results to return (default: 5).
+
+    Returns:
+        List of matching documents with id, score, text, and metadata.
+    """
+    try:
+        await db.ensure_collection_exists()
+        query_vector = await get_single_embedding(query)
+        results = await db.semantic_search(query_vector=query_vector, filters=filters, top_k=top_k)
+        return [{"id": r.id, "score": round(r.score, 4), "text": r.text, "metadata": r.metadata} for r in results]
+    except Exception as e:
+        _logger.error(f"Search failed: {e}")
+        return []
 
 
 @mcp.tool()
 async def get_document_metadata(document_id: str) -> dict | None:
-    return await db.get_by_id(document_id)
+    """
+    Retrieve metadata for a specific document by ID.
+
+    Args:
+        document_id: The unique identifier of the document.
+
+    Returns:
+        Document metadata dictionary or None if not found.
+    """
+    try:
+        return await db.get_by_id(document_id)
+    except Exception as e:
+        _logger.error(f"Failed to get document {document_id}: {e}")
+        return None
 
 
 @mcp.tool()
 async def summarize_document(document_id: str) -> str:
-    payload = await db.get_by_id(document_id)
-    if not payload:
-        return "Document not found."
-    return await map_reduce_summarize([payload.get("text", "")])
+    """
+    Generate a summary of a document using Map-Reduce.
+
+    Args:
+        document_id: The unique identifier of the document to summarize.
+
+    Returns:
+        A coherent summary of the document content.
+    """
+    try:
+        payload = await db.get_by_id(document_id)
+        if not payload:
+            return "Document not found."
+        text = payload.get("text", "")
+        if not text:
+            return "Document has no text content."
+        return await map_reduce_summarize([text])
+    except Exception as e:
+        _logger.error(f"Summarization failed for {document_id}: {e}")
+        return f"Error summarizing document: {str(e)}"
+
+
+@mcp.tool()
+async def index_document(text: str, metadata: dict | None = None) -> dict:
+    """
+    Index a new document into the knowledge base.
+
+    Args:
+        text: The text content of the document.
+        metadata: Optional metadata to attach to the document.
+
+    Returns:
+        Dictionary with document_id and status.
+    """
+    try:
+        if not text or not text.strip():
+            return {"status": "error", "error": "Text cannot be empty"}
+
+        chunks = chunk_documents([{"text": text, **(metadata or {})}], clean_text=True)
+        texts = [c["text"] for c in chunks]
+
+        vectors = await get_embeddings(texts)
+        await db.ensure_collection_exists()
+        await db.batch_insert(vectors, chunks)
+
+        return {"status": "success", "chunks_indexed": len(chunks)}
+    except Exception as e:
+        _logger.error(f"Indexing failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+async def index_chunked_documents(
+    documents: list[dict],
+    clean_text: bool = True,
+    classify: bool = False,
+) -> dict:
+    """
+    Index multiple pre-chunked documents into the knowledge base.
+
+    Args:
+        documents: List of document dicts with 'text' field.
+        clean_text: Whether to clean text before indexing.
+        classify: Whether to classify chunks with LLM.
+
+    Returns:
+        Dictionary with count of indexed chunks.
+    """
+    try:
+        if not documents:
+            return {"status": "error", "error": "No documents provided"}
+
+        chunks = chunk_documents(documents, clean_text=clean_text)
+        texts = [c["text"] for c in chunks]
+
+        if classify:
+            classifications = await classify_chunks_batch(texts[:10])
+            for i, cls in enumerate(classifications):
+                if i < len(chunks):
+                    chunks[i].update(cls)
+
+        vectors = await get_embeddings(texts)
+        await db.ensure_collection_exists()
+        await db.batch_insert(vectors, chunks)
+
+        return {"status": "success", "chunks_indexed": len(chunks)}
+    except Exception as e:
+        _logger.error(f"Batch indexing failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+async def rag_query(question: str, filters: dict | None = None, top_k: int = 5) -> dict:
+    """
+    Perform a RAG query: search knowledge base and generate answer.
+
+    Args:
+        question: The question to answer.
+        filters: Optional metadata filters for search.
+        top_k: Number of context chunks to retrieve.
+
+    Returns:
+        Dictionary with answer, sources, and intent.
+    """
+    try:
+        intent = await classify_user_intent(question)
+
+        search_filters = filters
+        if intent.get("filters"):
+            search_filters = {**(filters or {}), **intent["filters"]}
+
+        await db.ensure_collection_exists()
+        query_vector = await get_single_embedding(question)
+        results = await db.semantic_search(query_vector=query_vector, filters=search_filters, top_k=top_k)
+
+        context_chunks = [{"id": r.id, "text": r.text} for r in results]
+
+        if not context_chunks:
+            return {
+                "answer": "Insufficient data in the provided sources.",
+                "sources": [],
+                "intent": intent,
+            }
+
+        answer = await rag_answer(question, context_chunks)
+
+        return {
+            "answer": answer,
+            "sources": context_chunks,
+            "intent": intent,
+        }
+    except Exception as e:
+        _logger.error(f"RAG query failed: {e}")
+        return {"answer": f"Error processing query: {str(e)}", "sources": [], "intent": {}}
+
+
+@mcp.tool()
+async def classify_query_intent(question: str) -> dict:
+    """
+    Classify the intent of a user query.
+
+    Args:
+        question: The user's question text.
+
+    Returns:
+        Dictionary with intent, filters, and complexity.
+    """
+    try:
+        return await classify_user_intent(question)
+    except Exception as e:
+        _logger.error(f"Intent classification failed: {e}")
+        return {"intent": "GENERAL", "filters": None, "complexity": "simple"}
 
 
 @mcp.tool()
 async def judge_answer(question: str, context: str, answer: str) -> dict:
-    """Evaluate answer quality using LLM"""
+    """
+    Evaluate answer quality using LLM-as-judge.
+
+    Args:
+        question: The original question.
+        context: The context provided for answering.
+        answer: The AI-generated answer to evaluate.
+
+    Returns:
+        Dictionary with hallucination, coverage_score, citation_accuracy, verdict.
+    """
     judge_prompt = """You are an expert evaluator for AI-generated scientific summaries.
 Given the original context, a question, and the AI's answer, evaluate:
 
@@ -69,22 +258,84 @@ Return ONLY a JSON object. No markdown.
 
 Example:
 {"hallucination": "none", "coverage_score": 9, "citation_accuracy": "accurate", "verdict": "pass"}"""
-    
-    prompt = f"Question: {question}\n\nContext:\n{context[:3000]}\n\nAI Answer:\n{answer}"
-    response = await _strong_client.chat.completions.create(
-        model=settings.strong_llm_model,
-        messages=[
-            {"role": "system", "content": judge_prompt},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0,
-        max_tokens=150,
-    )
-    raw = response.choices[0].message.content.strip()
+
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+        prompt = f"Question: {question}\n\nContext:\n{context[:3000]}\n\nAI Answer:\n{answer}"
+        response = await _strong_client.chat.completions.create(
+            model=settings.strong_llm_model,
+            messages=[
+                {"role": "system", "content": judge_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0,
+            max_tokens=150,
+        )
+        raw = response.choices[0].message.content.strip()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            _logger.warning(f"Failed to parse judge response: {raw}")
+            return {"hallucination": "unknown", "coverage_score": 0, "citation_accuracy": "unknown", "verdict": "fail"}
+    except Exception as e:
+        _logger.error(f"Judge evaluation failed: {e}")
         return {"hallucination": "unknown", "coverage_score": 0, "citation_accuracy": "unknown", "verdict": "fail"}
+
+
+@mcp.tool()
+async def delete_document(document_id: str) -> dict:
+    """
+    Delete a document from the knowledge base.
+
+    Args:
+        document_id: The unique identifier of the document to delete.
+
+    Returns:
+        Dictionary with status indicating success or failure.
+    """
+    try:
+        success = await db.delete_by_id(document_id)
+        if success:
+            return {"status": "success", "document_id": document_id}
+        return {"status": "error", "error": "Document not found or delete failed"}
+    except Exception as e:
+        _logger.error(f"Delete failed for {document_id}: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+async def delete_by_filter(filters: dict) -> dict:
+    """
+    Delete documents matching metadata filters.
+
+    Args:
+        filters: Metadata filters to match documents for deletion.
+
+    Returns:
+        Dictionary with status of the deletion operation.
+    """
+    try:
+        if not filters:
+            return {"status": "error", "error": "Filters required for safety"}
+        count = await db.delete_by_filter(filters)
+        return {"status": "success", "message": "Documents deleted"}
+    except Exception as e:
+        _logger.error(f"Delete by filter failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+async def get_collection_info() -> dict:
+    """
+    Get information about the knowledge base collection.
+
+    Returns:
+        Dictionary with collection name, point count, and status.
+    """
+    try:
+        return await db.get_collection_info()
+    except Exception as e:
+        _logger.error(f"Failed to get collection info: {e}")
+        return {"status": "error", "error": str(e)}
 
 
 _tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -100,77 +351,114 @@ _strong_client = AsyncOpenAI(
 )
 
 
-async def agent_loop(question: str, filters: dict | None) -> tuple[str, list[dict]]:
+async def _execute_mcp_tool(tool_name: str, arguments: dict) -> str:
+    """Execute an MCP tool via stdio and return the result."""
     server_params = StdioServerParameters(command="python", args=[__file__, "--mcp"])
-    sources: list[dict] = []
 
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
+            result = await session.call_tool(tool_name, arguments)
+            if result.content:
+                return result.content[0].text
+            return "null"
 
-            mcp_tools = await session.list_tools()
-            tools_schema = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description or "",
-                        "parameters": t.inputSchema,
+
+async def agent_loop(question: str, filters: dict | None) -> tuple[str, list[dict]]:
+    """
+    Agent loop that uses MCP tools for knowledge retrieval.
+    Uses rag_query MCP tool for simple queries, or agent loop for complex ones.
+    """
+    try:
+        intent = await classify_user_intent(question)
+
+        # Use rag_query MCP tool for simple fact-finding
+        if intent.get("intent") in ("FIND_FACT", "METHODOLOGY", "GREETING"):
+            result_str = await _execute_mcp_tool("rag_query", {
+                "question": question,
+                "filters": filters,
+                "top_k": 5,
+            })
+            try:
+                result = json.loads(result_str)
+                return result.get("answer", ""), result.get("sources", [])
+            except json.JSONDecodeError:
+                pass
+
+        # Complex queries use the full agent loop
+        server_params = StdioServerParameters(command="python", args=[__file__, "--mcp"])
+        sources: list[dict] = []
+
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+
+                mcp_tools = await session.list_tools()
+                tools_schema = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description or "",
+                            "parameters": t.inputSchema,
+                        },
+                    }
+                    for t in mcp_tools.tools
+                ]
+
+                messages: list[dict] = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a precise scientific assistant with access to a knowledge base. "
+                            "Always call search_knowledge_base before answering. "
+                            "Use ONLY retrieved context. Cite sources as [chunk_id]. "
+                            "If facts are missing, say: 'Insufficient data in the provided sources.'"
+                        ),
                     },
-                }
-                for t in mcp_tools.tools
-            ]
+                    {"role": "user", "content": question},
+                ]
 
-            messages: list[dict] = [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a precise scientific assistant with access to a knowledge base. "
-                        "Always call search_knowledge_base before answering. "
-                        "Use ONLY retrieved context. Cite sources as [chunk_id]. "
-                        "If facts are missing, say: 'Insufficient data in the provided sources.'"
-                    ),
-                },
-                {"role": "user", "content": question},
-            ]
+                for _ in range(8):
+                    response = await _strong_client.chat.completions.create(
+                        model=settings.strong_llm_model,
+                        messages=messages,
+                        tools=tools_schema,
+                        tool_choice="auto",
+                    )
+                    choice = response.choices[0]
+                    msg = choice.message
+                    messages.append(msg.model_dump(exclude_none=True))
 
-            for _ in range(8):
-                response = await _strong_client.chat.completions.create(
-                    model=settings.strong_llm_model,
-                    messages=messages,
-                    tools=tools_schema,
-                    tool_choice="auto",
-                )
-                choice = response.choices[0]
-                msg = choice.message
-                messages.append(msg.model_dump(exclude_none=True))
+                    if choice.finish_reason != "tool_calls":
+                        return msg.content or "", sources
 
-                if choice.finish_reason != "tool_calls":
-                    return msg.content or "", sources
+                    for tool_call in msg.tool_calls or []:
+                        fn_name = tool_call.function.name
+                        fn_args = json.loads(tool_call.function.arguments)
 
-                for tool_call in msg.tool_calls or []:
-                    fn_name = tool_call.function.name
-                    fn_args = json.loads(tool_call.function.arguments)
+                        if filters and fn_name == "search_knowledge_base":
+                            fn_args.setdefault("filters", filters)
 
-                    if filters and fn_name == "search_knowledge_base":
-                        fn_args.setdefault("filters", filters)
+                        tool_result = await session.call_tool(fn_name, fn_args)
+                        tool_content = tool_result.content[0].text if tool_result.content else "[]"
 
-                    tool_result = await session.call_tool(fn_name, fn_args)
-                    tool_content = tool_result.content[0].text if tool_result.content else "[]"
+                        if fn_name == "search_knowledge_base":
+                            try:
+                                sources = json.loads(tool_content)
+                            except json.JSONDecodeError:
+                                sources = []
 
-                    if fn_name == "search_knowledge_base":
-                        try:
-                            sources = json.loads(tool_content)
-                        except json.JSONDecodeError:
-                            sources = []
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": tool_content,
+                        })
 
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": tool_content,
-                    })
-
-    return "No answer generated.", sources
+        return "No answer generated.", sources
+    except Exception as e:
+        _logger.error(f"Agent loop failed: {e}")
+        return f"Error processing request: {str(e)}", []
 
 
 class QueryRequest(BaseModel):
@@ -341,6 +629,62 @@ async def upload_file(file: UploadFile = File(...)):
 @api.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# MCP HTTP endpoints for AI agents
+
+
+@api.post("/mcp/tools/{tool_name}")
+async def call_mcp_tool(tool_name: str, arguments: dict = None):
+    """Direct HTTP endpoint to call MCP tools."""
+    if not arguments:
+        arguments = {}
+
+    valid_tools = {
+        "search_knowledge_base": search_knowledge_base,
+        "get_document_metadata": get_document_metadata,
+        "summarize_document": summarize_document,
+        "index_document": index_document,
+        "index_chunked_documents": index_chunked_documents,
+        "rag_query": rag_query,
+        "classify_query_intent": classify_query_intent,
+        "judge_answer": judge_answer,
+        "delete_document": delete_document,
+        "delete_by_filter": delete_by_filter,
+        "get_collection_info": get_collection_info,
+    }
+
+    if tool_name not in valid_tools:
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found. Available: {list(valid_tools.keys())}")
+
+    try:
+        result = await valid_tools[tool_name](**arguments)
+        return {"status": "success", "result": result}
+    except TypeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid arguments: {str(e)}")
+    except Exception as e:
+        _logger.error(f"Tool execution failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api.get("/mcp/tools")
+async def list_mcp_tools():
+    """List all available MCP tools with descriptions."""
+    return {
+        "tools": [
+            {"name": "search_knowledge_base", "description": "Search knowledge base using semantic similarity", "args": ["query", "filters?", "top_k?"]},
+            {"name": "get_document_metadata", "description": "Retrieve metadata for a document by ID", "args": ["document_id"]},
+            {"name": "summarize_document", "description": "Generate summary using Map-Reduce", "args": ["document_id"]},
+            {"name": "index_document", "description": "Index a new document into knowledge base", "args": ["text", "metadata?"]},
+            {"name": "index_chunked_documents", "description": "Index multiple pre-chunked documents", "args": ["documents", "clean_text?", "classify?"]},
+            {"name": "rag_query", "description": "Perform RAG query with answer generation", "args": ["question", "filters?", "top_k?"]},
+            {"name": "classify_query_intent", "description": "Classify user query intent", "args": ["question"]},
+            {"name": "judge_answer", "description": "Evaluate answer quality with LLM-as-judge", "args": ["question", "context", "answer"]},
+            {"name": "delete_document", "description": "Delete document by ID", "args": ["document_id"]},
+            {"name": "delete_by_filter", "description": "Delete documents matching filters", "args": ["filters"]},
+            {"name": "get_collection_info", "description": "Get collection statistics", "args": []},
+        ]
+    }
 
 
 if __name__ == "__main__":
