@@ -4,7 +4,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 import tempfile
-import shutil
 
 # Add parent directory to path for root imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -220,7 +219,6 @@ api.add_middleware(
 
 # Serve static files (frontend)
 from fastapi.staticfiles import StaticFiles
-import os
 
 static_dir = Path(__file__).parent.parent / "frontend"
 if static_dir.exists():

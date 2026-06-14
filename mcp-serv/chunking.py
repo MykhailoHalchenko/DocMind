@@ -1,7 +1,10 @@
 import re
+import logging
 from dataclasses import dataclass, field
 
 from config import settings
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,7 +35,8 @@ def extract_entities(text: str) -> list[dict]:
             for ent in doc.ents
             if ent.label_ in ("PERSON", "ORG", "DATE", "GPE", "WORK_OF_ART")
         ]
-    except Exception:
+    except Exception as e:
+        _logger.warning(f"NER extraction failed: {e}")
         return []
 
 

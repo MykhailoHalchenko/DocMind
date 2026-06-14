@@ -1,4 +1,3 @@
-import json
 import asyncio
 import sys
 from pathlib import Path
@@ -6,19 +5,6 @@ from typing import Dict, Any
 
 # Add mcp-serv to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "mcp-serv"))
-
-JUDGE_PROMPT = """You are an expert evaluator for AI-generated scientific summaries.
-Given the original context, a question, and the AI's answer, evaluate:
-
-1. hallucination: "none" | "partial" | "yes"
-2. coverage_score: 0-10 (did the answer cover all key facts?)
-3. citation_accuracy: "accurate" | "partial" | "missing"
-4. verdict: "pass" | "fail"
-
-Return ONLY a JSON object. No markdown.
-
-Example:
-{"hallucination": "none", "coverage_score": 9, "citation_accuracy": "accurate", "verdict": "pass"}"""
 
 
 def local_judge_answer(question: str, context: str, answer: str, expected: str) -> Dict[str, Any]:
@@ -31,9 +17,8 @@ def local_judge_answer(question: str, context: str, answer: str, expected: str) 
     # Check for hallucinations - look for factual contradictions
     context_lower = context.lower()
     answer_lower = answer.lower()
-    
+
     # Look for explicit contradictions in numbers
-    contradictions = False
     import re
     context_numbers = set(re.findall(r'\d+%?', context_lower))
     answer_numbers = set(re.findall(r'\d+%?', answer_lower))

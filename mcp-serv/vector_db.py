@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from dataclasses import dataclass
 
@@ -26,14 +27,18 @@ class SearchResult:
 class VectorDatabase:
     def __init__(self) -> None:
         self._client: AsyncQdrantClient | None = None
+        self._lock = asyncio.Lock()
 
     async def _get_client(self) -> AsyncQdrantClient:
-        if self._client is None:
-            self._client = AsyncQdrantClient(
-                url=settings.qdrant_url,
-                api_key=settings.qdrant_api_key,
-            )
-        return self._client
+        if self._client is not None:
+            return self._client
+        async with self._lock:
+            if self._client is None:
+                self._client = AsyncQdrantClient(
+                    url=settings.qdrant_url,
+                    api_key=settings.qdrant_api_key,
+                )
+            return self._client
 
     async def ensure_collection_exists(self) -> None:
         client = await self._get_client()

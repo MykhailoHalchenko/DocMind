@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(1536, env="EMBEDDING_DIMENSIONS")
 
     fast_llm_model: str = Field("qwen/qwen3.5-397b-a17b", env="FAST_LLM_MODEL")
-    fast_llm_base_url: str = Field("https://integrate.api.nvidia.com/v1/chat/completions", env="FAST_LLM_BASE_URL")
+    fast_llm_base_url: str = Field("https://integrate.api.nvidia.com/v1", env="FAST_LLM_BASE_URL")
     fast_llm_api_key: str = Field(..., env="FAST_LLM_API_KEY")
 
     strong_llm_model: str = Field("z-ai/glm-5.1", env="STRONG_LLM_MODEL")

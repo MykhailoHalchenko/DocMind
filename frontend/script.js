@@ -115,14 +115,22 @@ function displayResults(data) {
         data.sources.forEach((source, index) => {
             const sourceItem = document.createElement('div');
             sourceItem.className = 'source-item';
-            sourceItem.innerHTML = `
-                <strong>Source ${index + 1} (Score: ${source.score ? source.score.toFixed(3) : 'N/A'})</strong>
-                <p>${source.text ? source.text.substring(0, 200) + '...' : 'No text available'}</p>
-            `;
+
+            const strongEl = document.createElement('strong');
+            strongEl.textContent = `Source ${index + 1} (Score: ${source.score ? source.score.toFixed(3) : 'N/A'})`;
+
+            const pEl = document.createElement('p');
+            pEl.textContent = source.text ? source.text.substring(0, 200) + '...' : 'No text available';
+
+            sourceItem.appendChild(strongEl);
+            sourceItem.appendChild(pEl);
             sourcesContainer.appendChild(sourceItem);
         });
     } else {
-        sourcesContainer.innerHTML = '<p style="color: #6b7280;">No sources found.</p>';
+        const noSources = document.createElement('p');
+        noSources.style.color = '#6b7280';
+        noSources.textContent = 'No sources found.';
+        sourcesContainer.appendChild(noSources);
     }
 
     // Display intent
@@ -138,10 +146,15 @@ function displayResults(data) {
         ['input_tokens', 'output_tokens', 'total_tokens'].forEach(key => {
             const tokenItem = document.createElement('div');
             tokenItem.className = 'token-item';
-            tokenItem.innerHTML = `
-                <strong>${key.replace(/_/g, ' ')}</strong>
-                <span>${data.token_usage[key]}</span>
-            `;
+
+            const strongEl = document.createElement('strong');
+            strongEl.textContent = key.replace(/_/g, ' ');
+
+            const spanEl = document.createElement('span');
+            spanEl.textContent = String(data.token_usage[key]);
+
+            tokenItem.appendChild(strongEl);
+            tokenItem.appendChild(spanEl);
             tokensContainer.appendChild(tokenItem);
         });
     }
@@ -239,17 +252,31 @@ function showUploadError(message) {
 function addUploadedFile(fileName, fileSize, status) {
     const fileItem = document.createElement('div');
     fileItem.className = 'file-item';
-    
+
     const ext = fileName.split('.').pop().toUpperCase();
     const iconMap = { PDF: '📄', JSON: '📊', CSV: '📈' };
     const icon = iconMap[ext] || '📁';
 
-    fileItem.innerHTML = `
-        <div class="file-icon">${icon}</div>
-        <div class="file-name">${fileName}</div>
-        <div class="file-size">${formatFileSize(fileSize)}</div>
-        <div class="file-status ${status}">${status === 'success' ? '✓ Indexed' : '✗ Error'}</div>
-    `;
+    const iconDiv = document.createElement('div');
+    iconDiv.className = 'file-icon';
+    iconDiv.textContent = icon;
+
+    const nameDiv = document.createElement('div');
+    nameDiv.className = 'file-name';
+    nameDiv.textContent = fileName;
+
+    const sizeDiv = document.createElement('div');
+    sizeDiv.className = 'file-size';
+    sizeDiv.textContent = formatFileSize(fileSize);
+
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'file-status ' + status;
+    statusDiv.textContent = status === 'success' ? '✓ Indexed' : '✗ Error';
+
+    fileItem.appendChild(iconDiv);
+    fileItem.appendChild(nameDiv);
+    fileItem.appendChild(sizeDiv);
+    fileItem.appendChild(statusDiv);
 
     uploadedFiles.appendChild(fileItem);
 }
