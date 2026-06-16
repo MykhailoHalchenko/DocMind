@@ -167,11 +167,11 @@ async function handleFiles(files) {
 
     for (const file of files) {
         // Validate file type
-        const validTypes = ['.pdf', '.json', '.csv'];
+        const validTypes = ['.pdf', '.json', '.csv', '.txt', '.md'];
         const fileExt = '.' + file.name.split('.').pop().toLowerCase();
-        
+
         if (!validTypes.includes(fileExt)) {
-            showUploadError(`Invalid file type: ${file.name}. Supported: PDF, JSON, CSV`);
+            showUploadError(`Invalid file type: ${file.name}. Supported: PDF, JSON, CSV, TXT, MD`);
             continue;
         }
 
@@ -254,7 +254,7 @@ function addUploadedFile(fileName, fileSize, status) {
     fileItem.className = 'file-item';
 
     const ext = fileName.split('.').pop().toUpperCase();
-    const iconMap = { PDF: '📄', JSON: '📊', CSV: '📈' };
+    const iconMap = { PDF: '📄', JSON: '📊', CSV: '📈', TXT: '📝', MD: '📝' };
     const icon = iconMap[ext] || '📁';
 
     const iconDiv = document.createElement('div');

@@ -16,7 +16,7 @@ project/
 │   ├── chunking.py          # Text splitting
 │   ├── classifier.py        # LLM-1: chunk tagging + user intent
 │   ├── config.py            # Settings via pydantic-settings
-│   ├── dataset_loader.py    # PDF / JSON / CSV loader
+│   ├── dataset_loader.py    # PDF / JSON / CSV / TXT / MD loader
 │   ├── embeddings.py        # OpenAI embeddings
 │   ├── evaluation.py        # LLM-as-a-judge evaluation
 │   ├── llm.py               # LLM-2: RAG answer + Map-Reduce summarize
@@ -27,7 +27,7 @@ project/
 
 **Pipeline:**
 ```
-PDF/JSON/CSV → clean → chunk → NER (optional) → classify (LLM-1)
+PDF/JSON/CSV/TXT/MD → clean → chunk → NER (optional) → classify (LLM-1)
     → embed (OpenAI) → store (Qdrant)
 
 Query → intent (LLM-1) → semantic search (Qdrant)
@@ -57,9 +57,7 @@ source .venv/bin/activate        # Linux/macOS
 .venv\Scripts\activate           # Windows
 
 # 3. Install dependencies
-pip install fastapi uvicorn[standard] fastmcp mcp openai \
-    qdrant-client pydantic-settings tiktoken pymupdf \
-    spacy python-multipart tenacity
+pip install -r requirements.txt
 
 # 4. Download spaCy model (only needed if using --ner)
 python -m spacy download en_core_web_sm
@@ -133,7 +131,7 @@ python main.py index path/to/paper.pdf --ner
 python main.py index path/to/paper.pdf --no-classify
 ```
 
-Supported formats via web upload: `.pdf`, `.json`, `.csv`
+Supported formats via web upload: `.pdf`, `.json`, `.csv`, `.txt`, `.md`
 
 ### Run evaluation suite
 

@@ -84,23 +84,27 @@ def chunk_documents(
 
     for doc in documents:
         raw_text = doc.get(text_field, "")
-        if not raw_text:
+        if not raw_text or not raw_text.strip():
             continue
 
         if clean_text:
             raw_text = clean_pdf_text(raw_text)
 
+        if not raw_text.strip():
+            continue
+
         chunks = split_into_chunks(raw_text, use_ner=use_ner)
         meta = {k: v for k, v in doc.items() if k != text_field}
 
         for chunk in chunks:
-            result.append({
-                "text": chunk.text,
-                "chunk_index": chunk.index,
-                "source_start_char": chunk.start_char,
-                "source_end_char": chunk.end_char,
-                "entities": chunk.entities,
-                **meta,
-            })
+            if chunk.text and chunk.text.strip():
+                result.append({
+                    "text": chunk.text,
+                    "chunk_index": chunk.index,
+                    "source_start_char": chunk.start_char,
+                    "source_end_char": chunk.end_char,
+                    "entities": chunk.entities,
+                    **meta,
+                })
 
     return result

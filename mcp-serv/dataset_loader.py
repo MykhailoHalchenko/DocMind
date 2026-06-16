@@ -1,6 +1,7 @@
 import json
 import csv
 import asyncio
+import logging
 from pathlib import Path
 from typing import List, Dict, Any
 import sys
@@ -13,12 +14,14 @@ from chunking import chunk_documents
 from embeddings import get_embeddings
 from vector_db import db
 
+_logger = logging.getLogger(__name__)
+
 
 async def load_json_dataset(file_path: str) -> List[Dict[str, Any]]:
     """Load and parse JSON dataset"""
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    
+
     # Handle different JSON structures
     if isinstance(data, list):
         return data
@@ -56,58 +59,71 @@ async def index_dataset(
 ) -> Dict[str, Any]:
     """
     Index a dataset (PDF, JSON, or CSV) into the knowledge base
-    
+
     Args:
         file_path: Path to the file
         dataset_type: Type of dataset ('pdf', 'json', 'csv'). Auto-detect if None
         classify_chunks: Whether to classify chunks
         clean_text: Whether to clean text
         use_ner: Whether to use NER for entity recognition
-    
+
     Returns:
         Dictionary with indexing results
     """
     file_path = Path(file_path)
-    
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-    
+
     # Auto-detect dataset type
     if dataset_type is None:
         dataset_type = file_path.suffix.lstrip('.').lower()
-    
+
     result = {
-        "file": str(file_path),
+        "file": file_path.name,
         "type": dataset_type,
         "status": "processing",
         "chunks_indexed": 0,
         "error": None
     }
-    
+
+    if not file_path.exists():
+        result['status'] = 'error'
+        result['error'] = f"File not found: {file_path}"
+        return result
+
     try:
         documents = []
-        
+
         if dataset_type == 'pdf':
             # Load and chunk PDF
+            _logger.info(f"Loading PDF: {file_path}")
             text = await load_pdf_document(str(file_path))
+            if not text or not text.strip():
+                result['status'] = 'error'
+                result['error'] = "PDF contains no extractable text"
+                return result
             documents = [{'text': text, 'source': file_path.name}]
             documents = chunk_documents(
                 documents,
                 clean_text=clean_text,
                 use_ner=use_ner
             )
-        
+
         elif dataset_type == 'json':
             # Load JSON and use as documents or metadata
+            _logger.info(f"Loading JSON: {file_path}")
             data = await load_json_dataset(str(file_path))
+            if not data:
+                result['status'] = 'error'
+                result['error'] = "JSON file is empty or invalid"
+                return result
             for item in data:
                 if isinstance(item, dict):
                     # If item has 'text' or 'content' field, use it as document
                     if 'text' in item:
                         documents.append({**item, 'source': file_path.name})
                     elif 'content' in item:
-                        item['text'] = item.pop('content')
-                        documents.append({**item, 'source': file_path.name})
+                        item_copy = dict(item)
+                        item_copy['text'] = item_copy.pop('content')
+                        documents.append({**item_copy, 'source': file_path.name})
                     else:
                         # Use JSON string as text
                         documents.append({
@@ -117,69 +133,93 @@ async def index_dataset(
                         })
                 else:
                     documents.append({'text': str(item), 'source': file_path.name})
-            
+
             # Chunk documents
             documents = chunk_documents(
                 documents,
                 clean_text=clean_text,
                 use_ner=use_ner
             )
-        
+
         elif dataset_type == 'csv':
             # Load CSV data
+            _logger.info(f"Loading CSV: {file_path}")
             data = await load_csv_dataset(str(file_path))
+            if not data:
+                result['status'] = 'error'
+                result['error'] = "CSV file is empty"
+                return result
             for row in data:
                 # Try to find a text column
                 text_content = None
                 text_columns = ['text', 'content', 'description', 'summary']
-                
+
                 for col in text_columns:
-                    if col in row:
-                        text_content = row[col]
+                    if col in row and row[col]:
+                        text_content = str(row[col])
                         break
-                
+
                 if not text_content:
                     # Use all columns as text
-                    text_content = ' | '.join([f"{k}: {v}" for k, v in row.items()])
-                
+                    text_content = ' | '.join([f"{k}: {v}" for k, v in row.items() if v])
+
                 documents.append({
                     'text': text_content,
                     'metadata': {k: v for k, v in row.items() if k != 'text' and k != 'content'},
                     'source': file_path.name
                 })
-            
+
             # Chunk documents
             documents = chunk_documents(
                 documents,
                 clean_text=clean_text,
                 use_ner=use_ner
             )
-        
+
         else:
-            raise ValueError(f"Unsupported file type: {dataset_type}")
-        
+            result['status'] = 'error'
+            result['error'] = f"Unsupported file type: {dataset_type}. Supported: pdf, json, csv"
+            return result
+
+        if not documents:
+            result['status'] = 'error'
+            result['error'] = "No documents extracted from file"
+            return result
+
+        # Filter out empty texts
+        documents = [d for d in documents if d.get('text', '').strip()]
+        if not documents:
+            result['status'] = 'error'
+            result['error'] = "All extracted text chunks are empty"
+            return result
+
         # Classify if requested
         if classify_chunks:
-            from classifier import classify_chunks_batch
-            texts = [d.get('text', '') for d in documents]
-            classifications = await classify_chunks_batch(texts)
-            for doc, cls in zip(documents, classifications):
-                doc.update(cls)
-        
+            try:
+                from classifier import classify_chunks_batch
+                texts = [d.get('text', '') for d in documents]
+                classifications = await classify_chunks_batch(texts)
+                for doc, cls in zip(documents, classifications):
+                    doc.update(cls)
+            except Exception as e:
+                _logger.warning(f"Classification failed: {e}")
+
         # Generate embeddings and index
+        _logger.info(f"Indexing {len(documents)} chunks...")
         texts = [d.get('text', '') for d in documents]
-        if texts:
-            vectors = await get_embeddings(texts)
-            await db.ensure_collection_exists()
-            await db.batch_insert(vectors, documents)
-        
+        vectors = await get_embeddings(texts)
+        await db.ensure_collection_exists()
+        await db.batch_insert(vectors, documents)
+
         result['status'] = 'success'
         result['chunks_indexed'] = len(documents)
-        
+        _logger.info(f"Successfully indexed {len(documents)} chunks")
+
     except Exception as e:
+        _logger.error(f"Indexing failed: {e}")
         result['status'] = 'error'
         result['error'] = str(e)
-    
+
     return result
 
 

@@ -581,33 +581,69 @@ async def summarize(request: SummarizeRequest):
 
 @api.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Upload and index a PDF, JSON, or CSV file"""
+    """Upload and index a PDF, JSON, CSV, TXT, or MD file"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
-    
+
     # Validate file type
-    valid_extensions = ['.pdf', '.json', '.csv']
+    valid_extensions = ['.pdf', '.json', '.csv', '.txt', '.md']
     file_ext = '.' + file.filename.split('.')[-1].lower()
-    
+
     if file_ext not in valid_extensions:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type. Supported: {', '.join(valid_extensions)}"
+            detail=f"Invalid file type '{file_ext}'. Supported: {', '.join(valid_extensions)}"
         )
-    
+
     # Save temporary file
     temp_dir = Path(tempfile.gettempdir()) / "docmind_uploads"
     temp_dir.mkdir(exist_ok=True)
-    
-    temp_file = temp_dir / file.filename
-    
+
+    # Use unique filename to avoid conflicts
+    import uuid
+    unique_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    temp_file = temp_dir / unique_name
+
     try:
         # Save uploaded file
         contents = await file.read()
         with open(temp_file, 'wb') as f:
             f.write(contents)
-        
-        # Index the dataset
+
+        # Handle text files (txt, md) directly
+        if file_ext in ['.txt', '.md']:
+            try:
+                with open(temp_file, 'r', encoding='utf-8') as f:
+                    text = f.read()
+
+                if not text.strip():
+                    return {"file": file.filename, "type": file_ext.lstrip('.'), "status": "error", "error": "File is empty"}
+
+                # Chunk and index text
+                documents = [{'text': text, 'source': file.filename}]
+                documents = chunk_documents(documents, clean_text=True)
+
+                if not documents:
+                    return {"file": file.filename, "type": file_ext.lstrip('.'), "status": "error", "error": "No text chunks extracted"}
+
+                texts = [d['text'] for d in documents]
+                vectors = await get_embeddings(texts)
+                await db.ensure_collection_exists()
+                await db.batch_insert(vectors, documents)
+
+                return {
+                    "file": file.filename,
+                    "type": file_ext.lstrip('.'),
+                    "status": "success",
+                    "chunks_indexed": len(documents)
+                }
+            except UnicodeDecodeError:
+                return {"file": file.filename, "type": file_ext.lstrip('.'), "status": "error", "error": "Could not read file as UTF-8 text"}
+            except Exception as e:
+                _logger.error(f"Text file indexing failed: {e}")
+                return {"file": file.filename, "type": file_ext.lstrip('.'), "status": "error", "error": str(e)}
+
+        # Index other file types using dataset_loader
         result = await index_dataset(
             str(temp_file),
             dataset_type=file_ext.lstrip('.'),
@@ -615,15 +651,21 @@ async def upload_file(file: UploadFile = File(...)):
             clean_text=True,
             use_ner=False
         )
-        
+
         return result
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
+        _logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Clean up temp file
-        if temp_file.exists():
-            temp_file.unlink()
+        try:
+            if temp_file.exists():
+                temp_file.unlink()
+        except Exception:
+            pass
 
 
 @api.get("/health")
