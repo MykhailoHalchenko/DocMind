@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     strong_llm_base_url: str = Field("https://integrate.api.nvidia.com/v1", env="STRONG_LLM_BASE_URL")
     strong_llm_api_key: str = Field(..., env="STRONG_LLM_API_KEY")
 
+    gemini_model: str = Field("gemini-3.5-pro", env="GEMINI_MODEL")
+    gemini_api_key: str | None = Field(None, env="GEMINI_API_KEY")
+
     chunk_size: int = Field(200, env="CHUNK_SIZE")
     chunk_overlap: int = Field(50, env="CHUNK_OVERLAP")
     top_k_results: int = Field(5, env="TOP_K_RESULTS")

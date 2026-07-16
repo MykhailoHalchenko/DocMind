@@ -12,6 +12,7 @@ from chunking import chunk_documents
 from classifier import classify_chunks_batch
 import embeddings
 from evaluation import print_eval_report
+from logging_setup import configure_logging
 from pdf_parser import pdf_to_document
 from vector_db import db
 
@@ -89,6 +90,8 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, open_browser: bool = Tru
 
 
 def main():
+    configure_logging()
+
     parser = argparse.ArgumentParser(
         description="DocMind - Knowledge Base Query System",
         formatter_class=argparse.RawDescriptionHelpFormatter,

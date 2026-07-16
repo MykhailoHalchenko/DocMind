@@ -22,6 +22,9 @@ project/
 │   ├── llm.py               # LLM-2: RAG answer + Map-Reduce summarize
 │   ├── pdf_parser.py        # PyMuPDF text extraction
 │   └── vector_db.py         # Qdrant async client
+├── storage/                 # Local storage cache, including Google Drive sync
+├── unittests/               # Unit tests and bug-finding checks
+└── logging/                 # Runtime log files
 └── datasets/                # Sample datasets
 ```
 
@@ -40,7 +43,7 @@ Query → intent (LLM-1) → semantic search (Qdrant)
 
 - Python 3.11+
 - [Qdrant](https://qdrant.tech/) (cloud or local via Docker)
-- API keys: OpenAI + NVIDIA NIM (for Qwen + GLM)
+- API keys: OpenAI + NVIDIA NIM (for Qwen + GLM) plus optional Gemini
 
 ---
 
@@ -90,6 +93,10 @@ STRONG_LLM_MODEL=z-ai/glm-5.1
 STRONG_LLM_BASE_URL=https://integrate.api.nvidia.com/v1
 STRONG_LLM_API_KEY=nvapi-...
 
+# Optional Gemini provider (alternate RAG / summarization path)
+GEMINI_MODEL=gemini-3.5-pro
+GEMINI_API_KEY=AIza...
+
 # Chunking
 CHUNK_SIZE=200
 CHUNK_OVERLAP=50
@@ -97,6 +104,11 @@ TOP_K_RESULTS=5
 ```
 
 > **Note:** The `.env` file is already gitignored. Never commit API keys.
+
+Gemini is an additional model in the project, not a replacement. Qwen remains the fast classifier and GLM remains the default strong LLM.
+
+Google Drive sources are synchronized into `storage/google_drive/` before indexing.
+Unit tests live in `unittests/`, and runtime logs are written under `logging/`.
 
 ---
 
@@ -315,6 +327,7 @@ curl -X POST http://localhost:8000/upload \
 | Embeddings | OpenAI `text-embedding-3-small` |
 | Fast LLM | Qwen 3.5 via NVIDIA NIM |
 | Strong LLM | GLM-5.1 via NVIDIA NIM |
+| Optional Strong LLM | Gemini 3.5 Pro via Google API |
 | PDF Parsing | PyMuPDF (fitz) |
 | NER | spaCy `en_core_web_sm` |
 | Config | pydantic-settings |

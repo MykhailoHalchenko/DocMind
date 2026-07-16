@@ -3,6 +3,7 @@ uvicorn[standard]
 fastmcp
 mcp
 openai
+google-genai
 qdrant-client
 pydantic-settings
 tiktoken

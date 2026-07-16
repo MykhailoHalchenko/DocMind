@@ -13,6 +13,7 @@ from pdf_parser import pdf_to_document
 from chunking import chunk_documents
 from embeddings import get_embeddings
 from vector_db import db
+from storage.google_drive_sync import sync_google_drive_source
 
 _logger = logging.getLogger(__name__)
 
@@ -227,3 +228,40 @@ async def index_multiple_datasets(file_paths: List[str]) -> List[Dict[str, Any]]
     """Index multiple datasets concurrently"""
     tasks = [index_dataset(path) for path in file_paths]
     return await asyncio.gather(*tasks)
+
+
+async def index_google_drive_source(
+    source: str,
+    dataset_type: str | None = None,
+    classify_chunks: bool = False,
+    clean_text: bool = True,
+    use_ner: bool = False,
+    file_name: str | None = None,
+) -> Dict[str, Any]:
+    """Sync a Google Drive source into storage and index the local copy."""
+    try:
+        synced = await asyncio.to_thread(sync_google_drive_source, source, None, file_name)
+        local_path = synced["file_path"]
+        effective_dataset_type = dataset_type or synced.get("dataset_type")
+
+        result = await index_dataset(
+            local_path,
+            dataset_type=effective_dataset_type,
+            classify_chunks=classify_chunks,
+            clean_text=clean_text,
+            use_ner=use_ner,
+        )
+        result["source"] = "google_drive"
+        result["drive_source"] = source
+        result["sync_status"] = synced.get("status")
+        result["manifest_path"] = synced.get("manifest_path")
+        return result
+    except Exception as e:
+        _logger.error(f"Google Drive indexing failed: {e}")
+        return {
+            "file": file_name or source,
+            "type": dataset_type or "google_drive",
+            "status": "error",
+            "chunks_indexed": 0,
+            "error": str(e),
+        }

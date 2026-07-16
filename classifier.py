@@ -42,10 +42,10 @@ def _classify_intent_heuristic(question: str) -> dict:
         intent = "SUMMARIZE"
     elif any(word in q_lower for word in ["method", "how did", "procedure", "process"]):
         intent = "METHODOLOGY"
-    elif any(word in q_lower for word in ["result", "find", "what", "where", "who"]):
-        intent = "FIND_FACT"
     elif any(word in q_lower for word in ["compare", "difference", "similar", "versus", "vs"]):
         intent = "COMPARE"
+    elif any(word in q_lower for word in ["result", "find", "what", "where", "who"]):
+        intent = "FIND_FACT"
     elif any(word in q_lower for word in ["hi", "hello", "hey", "thanks"]):
         intent = "GREETING"
     
