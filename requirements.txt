@@ -4,7 +4,7 @@ fastmcp
 mcp
 openai
 google-genai
-qdrant-client
+faiss-cpu
 pydantic-settings
 tiktoken
 pymupdf

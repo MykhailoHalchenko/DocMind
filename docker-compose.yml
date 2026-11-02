@@ -1,0 +1,15 @@
+services:
+  docmind:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      FAISS_INDEX_PATH: /app/data/knowledge_base.faiss
+      FAISS_METADATA_PATH: /app/data/knowledge_base.json
+    volumes:
+      - docmind-data:/app/data
+
+volumes:
+  docmind-data:

@@ -3,9 +3,8 @@ from pydantic import Field
 
 
 class Settings(BaseSettings):
-    qdrant_url: str = Field(..., env="QDRANT_URL")
-    qdrant_api_key: str | None = Field(None, env="QDRANT_API_KEY")
-    qdrant_collection: str = Field("knowledge_base", env="QDRANT_COLLECTION")
+    faiss_index_path: str = Field("./data/knowledge_base.faiss", env="FAISS_INDEX_PATH")
+    faiss_metadata_path: str = Field("./data/knowledge_base.json", env="FAISS_METADATA_PATH")
 
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")
     embedding_model: str = Field("text-embedding-3-small", env="EMBEDDING_MODEL")

@@ -1,7 +1,6 @@
 import json
 import logging
 import sys
-import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 import tempfile
@@ -21,7 +20,7 @@ from pydantic import BaseModel
 from chunking import chunk_documents
 from classifier import classify_user_intent, classify_chunks_batch
 from config import settings
-from dataset_loader import index_dataset, index_multiple_datasets, index_google_drive_source as sync_and_index_google_drive
+from dataset_loader import index_dataset
 from embeddings import get_embeddings, get_single_embedding
 from llm import rag_answer, map_reduce_summarize
 from logging_setup import configure_logging
@@ -224,26 +223,6 @@ async def rag_query(
 
 
 @mcp.tool()
-async def index_google_drive_source(
-    source: str,
-    dataset_type: str | None = None,
-    file_name: str | None = None,
-    classify_chunks: bool = False,
-    clean_text: bool = True,
-    use_ner: bool = False,
-) -> dict:
-    """Sync a Google Drive source into storage and index the local copy."""
-    return await sync_and_index_google_drive(
-        source=source,
-        dataset_type=dataset_type,
-        classify_chunks=classify_chunks,
-        clean_text=clean_text,
-        use_ner=use_ner,
-        file_name=file_name,
-    )
-
-
-@mcp.tool()
 async def classify_query_intent(question: str) -> dict:
     """
     Classify the intent of a user query.
@@ -345,7 +324,7 @@ async def delete_by_filter(filters: dict) -> dict:
         if not filters:
             return {"status": "error", "error": "Filters required for safety"}
         count = await db.delete_by_filter(filters)
-        return {"status": "success", "message": "Documents deleted"}
+        return {"status": "success", "deleted": count}
     except Exception as e:
         _logger.error(f"Delete by filter failed: {e}")
         return {"status": "error", "error": str(e)}
@@ -515,17 +494,8 @@ class SummarizeRequest(BaseModel):
     provider: str | None = None
 
 
-class GoogleDriveIndexRequest(BaseModel):
-    source: str
-    dataset_type: str | None = None
-    file_name: str | None = None
-    classify_chunks: bool = False
-    clean_text: bool = True
-    use_ner: bool = False
-
-
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     await db.ensure_collection_exists()
     yield
     await db.close()
@@ -615,18 +585,6 @@ async def summarize(request: SummarizeRequest):
         raise HTTPException(status_code=400, detail="No chunks provided")
     summary = await map_reduce_summarize(request.chunks, provider=request.provider)
     return {"summary": summary}
-
-
-@api.post("/index/google-drive")
-async def index_google_drive(request: GoogleDriveIndexRequest):
-    return await sync_and_index_google_drive(
-        source=request.source,
-        dataset_type=request.dataset_type,
-        classify_chunks=request.classify_chunks,
-        clean_text=request.clean_text,
-        use_ner=request.use_ner,
-        file_name=request.file_name,
-    )
 
 
 @api.post("/upload")
@@ -738,7 +696,6 @@ async def call_mcp_tool(tool_name: str, arguments: dict = None):
         "summarize_document": summarize_document,
         "index_document": index_document,
         "index_chunked_documents": index_chunked_documents,
-        "index_google_drive_source": index_google_drive_source,
         "rag_query": rag_query,
         "classify_query_intent": classify_query_intent,
         "judge_answer": judge_answer,
@@ -770,7 +727,6 @@ async def list_mcp_tools():
             {"name": "summarize_document", "description": "Generate summary using Map-Reduce", "args": ["document_id", "provider?"]},
             {"name": "index_document", "description": "Index a new document into knowledge base", "args": ["text", "metadata?"]},
             {"name": "index_chunked_documents", "description": "Index multiple pre-chunked documents", "args": ["documents", "clean_text?", "classify?"]},
-            {"name": "index_google_drive_source", "description": "Sync and index a Google Drive source from storage", "args": ["source", "dataset_type?", "file_name?", "classify_chunks?", "clean_text?", "use_ner?"]},
             {"name": "rag_query", "description": "Perform RAG query with answer generation", "args": ["question", "filters?", "top_k?", "provider?"]},
             {"name": "classify_query_intent", "description": "Classify user query intent", "args": ["question"]},
             {"name": "judge_answer", "description": "Evaluate answer quality with LLM-as-judge", "args": ["question", "context", "answer"]},

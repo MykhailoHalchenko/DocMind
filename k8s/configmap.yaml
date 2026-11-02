@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: docmind-config
+data:
+  FAISS_INDEX_PATH: /app/data/knowledge_base.faiss
+  FAISS_METADATA_PATH: /app/data/knowledge_base.json
+  EMBEDDING_MODEL: text-embedding-3-small
+  EMBEDDING_DIMENSIONS: "1536"
+  TOP_K_RESULTS: "5"

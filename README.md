@@ -21,8 +21,8 @@ project/
 │   ├── evaluation.py        # LLM-as-a-judge evaluation
 │   ├── llm.py               # LLM-2: RAG answer + Map-Reduce summarize
 │   ├── pdf_parser.py        # PyMuPDF text extraction
-│   └── vector_db.py         # Qdrant async client
-├── storage/                 # Local storage cache, including Google Drive sync
+│   └── vector_db.py         # Persistent FAISS index and metadata
+├── storage/                 # Local application storage
 ├── unittests/               # Unit tests and bug-finding checks
 └── logging/                 # Runtime log files
 └── datasets/                # Sample datasets
@@ -31,9 +31,9 @@ project/
 **Pipeline:**
 ```
 PDF/JSON/CSV/TXT/MD → clean → chunk → NER (optional) → classify (LLM-1)
-    → embed (OpenAI) → store (Qdrant)
+    → embed (OpenAI) → store (FAISS)
 
-Query → intent (LLM-1) → semantic search (Qdrant)
+Query → intent (LLM-1) → semantic search (FAISS)
     → RAG answer (LLM-2 / GLM-5.1) → cited response
 ```
 
@@ -42,7 +42,7 @@ Query → intent (LLM-1) → semantic search (Qdrant)
 ## Requirements
 
 - Python 3.11+
-- [Qdrant](https://qdrant.tech/) (cloud or local via Docker)
+- [FAISS](https://github.com/facebookresearch/faiss) (local persistent index)
 - API keys: OpenAI + NVIDIA NIM (for Qwen + GLM) plus optional Gemini
 
 ---
@@ -73,10 +73,9 @@ python -m spacy download en_core_web_sm
 Create a `.env` file in the project root (copy from `.env.example`):
 
 ```env
-# Qdrant
-QDRANT_URL=https://your-cluster.qdrant.io
-QDRANT_API_KEY=your-qdrant-key
-QDRANT_COLLECTION=knowledge_base
+# FAISS
+FAISS_INDEX_PATH=./data/knowledge_base.faiss
+FAISS_METADATA_PATH=./data/knowledge_base.json
 
 # OpenAI (embeddings)
 OPENAI_API_KEY=sk-...
@@ -107,7 +106,6 @@ TOP_K_RESULTS=5
 
 Gemini is an additional model in the project, not a replacement. Qwen remains the fast classifier and GLM remains the default strong LLM.
 
-Google Drive sources are synchronized into `storage/google_drive/` before indexing.
 Unit tests live in `unittests/`, and runtime logs are written under `logging/`.
 
 ---
@@ -121,6 +119,31 @@ python main.py server
 ```
 
 Opens the browser automatically at `http://localhost:8000`.
+
+### Run with Docker
+
+```bash
+docker build -t docmind:latest .
+docker run --rm -p 8000:8000 --env-file .env -v docmind-data:/app/data docmind:latest
+```
+
+Or use Compose:
+
+```bash
+docker compose up --build
+```
+
+### Deploy to Kubernetes
+
+Build and publish `docmind:latest` to an image registry available to the cluster,
+then create a Secret from the example and apply the manifests:
+
+```bash
+kubectl apply -f k8s/secret.example.yaml
+kubectl apply -f k8s/configmap.yaml -f k8s/pvc.yaml -f k8s/deployment.yaml -f k8s/service.yaml
+```
+
+Replace the placeholder values in `k8s/secret.example.yaml` before applying it.
 
 ```bash
 # Custom port, no browser auto-open
@@ -232,11 +255,11 @@ curl http://localhost:8000/health
 3. **Classify** *(optional)* — Qwen tags each chunk: `category`, `keywords`, `sentiment`
 4. **NER** *(optional)* — spaCy extracts persons, orgs, dates, locations
 5. **Embed** — OpenAI `text-embedding-3-small` converts chunks to 1536-dim vectors
-6. **Store** — Vectors + metadata saved to Qdrant
+6. **Store** — Vectors + metadata saved to FAISS and its JSON sidecar
 
 ### Querying
 1. **Intent** — Qwen classifies user query: intent + section hint + keywords
-2. **Search** — Query embedded → semantic search in Qdrant (filters applied from intent)
+2. **Search** — Query embedded → semantic search in FAISS (filters applied from intent)
 3. **Answer** — GLM-5.1 receives top-K chunks as context, answers with citations `[chunk_id]`
 4. If facts not found → responds `"Insufficient data in the provided sources."`
 
@@ -304,7 +327,8 @@ curl -X POST http://localhost:8000/upload \
 → Check that `.env` exists in the project root and all required keys are set.
 
 **`Collection does not exist` error**
-→ The collection is created automatically on first run. Check `QDRANT_URL` and `QDRANT_API_KEY`.
+→ The FAISS index and metadata sidecar are created automatically on first run. Check
+`FAISS_INDEX_PATH` and `FAISS_METADATA_PATH`, and ensure the directory is writable.
 
 **Empty search results**
 → Index documents first via `/upload` or `python main.py index <file>`.
@@ -323,7 +347,7 @@ curl -X POST http://localhost:8000/upload \
 |-----------|-----------|
 | API Server | FastAPI + uvicorn |
 | MCP Protocol | FastMCP |
-| Vector DB | Qdrant (async) |
+| Vector DB | FAISS (persistent local index) |
 | Embeddings | OpenAI `text-embedding-3-small` |
 | Fast LLM | Qwen 3.5 via NVIDIA NIM |
 | Strong LLM | GLM-5.1 via NVIDIA NIM |

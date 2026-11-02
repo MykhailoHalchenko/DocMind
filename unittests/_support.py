@@ -92,63 +92,6 @@ def _install_pydantic_stub() -> None:
     sys.modules["pydantic"] = module
 
 
-def _install_qdrant_stub() -> None:
-    try:
-        import qdrant_client  # type: ignore
-        return
-    except Exception:
-        pass
-
-    module = types.ModuleType("qdrant_client")
-    models = types.ModuleType("qdrant_client.models")
-
-    class _DummyModel:
-        def __init__(self, *args, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-
-    class AsyncQdrantClient:  # noqa: N801
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def collection_exists(self, *args, **kwargs):
-            return True
-
-        async def create_collection(self, *args, **kwargs):
-            return None
-
-        async def upsert(self, *args, **kwargs):
-            return None
-
-        async def search(self, *args, **kwargs):
-            return []
-
-        async def retrieve(self, *args, **kwargs):
-            return []
-
-        async def delete(self, *args, **kwargs):
-            return None
-
-        async def get_collection(self, *args, **kwargs):
-            return _DummyModel(points_count=0, vectors_count=0, status=_DummyModel(value="green"))
-
-        async def close(self):
-            return None
-
-    models.Distance = _DummyModel
-    models.VectorParams = _DummyModel
-    models.PointStruct = _DummyModel
-    models.Filter = _DummyModel
-    models.FieldCondition = _DummyModel
-    models.MatchValue = _DummyModel
-    models.ScoredPoint = _DummyModel
-
-    module.AsyncQdrantClient = AsyncQdrantClient
-    module.models = models
-    sys.modules["qdrant_client"] = module
-    sys.modules["qdrant_client.models"] = models
-
-
 def configure_test_environment() -> Path:
     root = Path(__file__).resolve().parent.parent
     mcp_serv = root / "mcp-serv"
@@ -156,15 +99,12 @@ def configure_test_environment() -> Path:
     _install_openai_stub()
     _install_pydantic_stub()
     _install_pydantic_settings_stub()
-    _install_qdrant_stub()
-
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     if str(mcp_serv) not in sys.path:
         sys.path.insert(0, str(mcp_serv))
 
     defaults = {
-        "QDRANT_URL": "http://localhost:6333",
         "OPENAI_API_KEY": "test-openai-key",
         "FAST_LLM_API_KEY": "test-fast-key",
         "STRONG_LLM_API_KEY": "test-strong-key",
